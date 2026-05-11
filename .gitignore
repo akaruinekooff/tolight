@@ -1,6 +1,8 @@
 /target
 .tolight
 *.lock
+!/Cargo.lock
+!/Cargo.lock
 .idea
 tolight-*.tar.gz
 tolight-*.zip
