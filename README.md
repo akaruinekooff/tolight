@@ -2,7 +2,7 @@
 
 A terminal-based (TUI) todo list manager for developers. Todo files live alongside your project — one per project, under `.tolight/todos.json`.
 
-![screenshot](https://github.com/akaruineko/tolight/raw/main/screenshot.png)
+![screenshot](/screenshot.png)
 
 ## Features
 
@@ -40,11 +40,7 @@ A terminal-based (TUI) todo list manager for developers. Todo files live alongsi
 
 ## Installation
 
-```bash
-cargo install tolight
-```
-
-Or build from source:
+You can only build from source or use prebuilt releases:
 
 ```bash
 git clone https://github.com/akaruineko/tolight.git
