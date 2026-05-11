@@ -2,3 +2,4 @@
 .tolight
 *.lock
 .idea
+tolight-*/
