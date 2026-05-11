@@ -4,8 +4,8 @@ use std::path::Path;
 use serde_json;
 use crate::{Todo};
 
-pub fn save_to_file(todos: Vec<Todo>) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(&todos)?;
+pub fn save_to_file(todos: &[Todo]) -> std::io::Result<()> {
+    let json = serde_json::to_string_pretty(todos)?;
     fs::write(env::current_dir().expect("check perms in current dir").join(".tolight").join("todos.json"), json)?;
     Ok(())
 }

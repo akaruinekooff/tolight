@@ -283,6 +283,7 @@ fn main() -> Result<(), io::Error> {
                             if let Some(t) = app.todos.get_mut(app.selected) {
                                 t.done = !t.done;
                             }
+save_to_file(&app.todos)?;
                         }
                     }
 
@@ -329,6 +330,7 @@ fn main() -> Result<(), io::Error> {
                                             done: false,
                                             notes: String::new(),
                                         });
+                                        save_to_file(&app.todos)?;
                                     }
                                     app.mode = Mode::Normal;
                             }
@@ -336,6 +338,7 @@ fn main() -> Result<(), io::Error> {
                                     if let Some(t) = app.todos.get_mut(app.selected) {
                                         t.notes = app.input.drain(..).collect();
                                     }
+                                    save_to_file(&app.todos)?;
                                 app.mode = Mode::Normal;
                             }
                             _ => {}
@@ -370,6 +373,7 @@ fn main() -> Result<(), io::Error> {
                         if app.mode == Mode::RemoveDialogue {
                             let id = app.todos[app.selected].id;
                             app.todos.retain(|t| t.id != id);
+                            save_to_file(&app.todos)?;
                             app.mode = Mode::Normal;
                         }
                     }
@@ -395,13 +399,17 @@ fn main() -> Result<(), io::Error> {
                         }
                     }
 
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        save_to_file(&app.todos)?;
+                        break;
+                    }
+
                     // input
                     KeyCode::Char(c) => {
                         if matches!(app.mode, Mode::InputTodo | Mode::EditNotes | Mode::RemoveDialogue) {
                             app.input.push(c);
                         }
-                        if c == KeyCode::Char('q').as_char().unwrap() {
-                            save_to_file(app.todos)?;
+                        if c == 'q' {
                             break;
                         }
                     }
