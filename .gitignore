@@ -2,4 +2,5 @@
 .tolight
 *.lock
 .idea
-tolight-*/
+tolight-*.tar.gz
+tolight-*.zip
