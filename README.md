@@ -2,7 +2,7 @@
 
 A terminal-based (TUI) todo list manager for developers. Todo files live alongside your project — one per project, under `.tolight/todos.json`.
 
-![screenshot](/screenshot.png)
+![screenshot](https://github.com/akaruinekooff/tolight/raw/main/screenshot.png)
 
 ## Features
 
