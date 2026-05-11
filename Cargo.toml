@@ -2,6 +2,12 @@
 name = "tolight"
 version = "0.1.0"
 edition = "2024"
+description = "A terminal-based (TUI) todo list manager for developers with per-project todo files"
+authors = ["George Kulikov"]
+license = "MIT"
+repository = "https://github.com/akaruineko/tolight"
+keywords = ["todo", "tui", "terminal", "project-management", "ratatui"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.30.0"

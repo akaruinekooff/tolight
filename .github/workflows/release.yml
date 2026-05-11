@@ -42,6 +42,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Sync version from tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" Cargo.toml
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
