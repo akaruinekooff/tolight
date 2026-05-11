@@ -43,7 +43,7 @@ A terminal-based (TUI) todo list manager for developers. Todo files live alongsi
 You can only build from source or use prebuilt releases:
 
 ```bash
-git clone https://github.com/akaruineko/tolight.git
+git clone https://github.com/akaruinekooff/tolight.git
 cd tolight
 cargo install --path .
 ```
