@@ -1,4 +1,5 @@
 mod cfg;
+mod project;
 
 use crossterm::{
     event::{self, Event, KeyCode},
@@ -19,7 +20,7 @@ use ratatui::{
     Terminal,
 };
 
-use crate::cfg::{load_config, load_todos, parse_config, save_to_file, update_config_line};
+use crate::cfg::{global_todo_path, load_config, load_todos, parse_config, save_to_file, update_config_line};
 use crossterm::event::KeyModifiers;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -36,10 +37,10 @@ enum Mode {
     InputTodo,
     EditNotes,
     RemoveDialogue,
+    SuggestProject,
 }
 
-#[derive(Serialize, Deserialize)]
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Todo {
     id: u64,
     text: String,
@@ -62,9 +63,77 @@ struct App {
     cfg: HashMap<String, String>,
     cfg_dir: PathBuf,
     hints: bool,
+
+    todo_path: PathBuf,
+    suggested_project: Option<(String, PathBuf)>,
 }
 
 fn main() -> Result<(), io::Error> {
+    let args: Vec<String> = env::args().collect();
+    let cwd = env::current_dir()?;
+
+    let proj = ProjectDirs::from("space", "akaruineko", "tolight")
+        .expect("cannot determine dirs");
+    let cfg_dir = proj.config_dir().to_path_buf();
+    let cfg_path = cfg_dir.join("config.cfg");
+
+    let (todo_path, suggested_project, mode) = match args.len() {
+        1 => {
+            // tolight — auto-detect
+            match project::detect_project(&cwd) {
+                Some((_, root)) if root.join(".tolight").join("todos.json").exists() => {
+                    (root.join(".tolight").join("todos.json"), None, Mode::Normal)
+                }
+                Some((name, root)) => {
+                    // git repo found — suggest creating project todo
+                    (global_todo_path(), Some((name, root)), Mode::SuggestProject)
+                }
+                None => {
+                    (global_todo_path(), None, Mode::Normal)
+                }
+            }
+        }
+        2 => {
+            // tolight "project-name" — look up by name
+            let registry = project::load_registry();
+            let name = &args[1];
+            match registry.get(name) {
+                Some(path_str) => {
+                    let root = PathBuf::from(path_str);
+                    let path = root.join(".tolight").join("todos.json");
+                    (path, None, Mode::Normal)
+                }
+                None => {
+                    eprintln!("Project '{}' not found.", name);
+                    eprintln!("Run 'tolight new \"{}\"' from the project directory to create one.", name);
+                    return Ok(());
+                }
+            }
+        }
+        3 if args[1] == "new" => {
+            // tolight new "project-name" — create and register
+            let name = &args[2];
+            let root = project::find_project_root(&cwd);
+            let tolight_dir = root.join(".tolight");
+            fs::create_dir_all(&tolight_dir)?;
+            let path = tolight_dir.join("todos.json");
+            if !path.exists() {
+                fs::write(&path, "[]")?;
+            }
+            project::register_project(name, &root);
+            (path, None, Mode::Normal)
+        }
+        _ => {
+            eprintln!("Usage: tolight [project-name | new <project-name>]");
+            return Ok(());
+        }
+    };
+
+    // Ensure global ~/.tolight/ exists for the registry
+    if let Some(parent) = global_todo_path().parent() {
+        fs::create_dir_all(parent).ok();
+    }
+
     enable_raw_mode()?;
 
     let mut stdout = io::stdout();
@@ -72,16 +141,11 @@ fn main() -> Result<(), io::Error> {
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let proj = ProjectDirs::from("space", "akaruineko", "tolight")
-        .expect("cannot determine dirs");
-    let cfg = proj.config_dir().join("config.cfg");
-
-    fs::create_dir_all(env::current_dir().expect("check perms in current dir").join(".tolight")).ok();
 
     let mut app = App {
         focus: Focus::Right,
-        mode: Mode::Normal,
-        todos: load_todos(),
+        mode,
+        todos: load_todos(&todo_path),
         selected: 0,
         input: String::new(),
         edit_scroll: 0,
@@ -89,29 +153,36 @@ fn main() -> Result<(), io::Error> {
         todo_scroll: 0,
         todo_view_height: 0usize,
 
-        cfg_dir: proj.config_dir().to_path_buf(),
-        cfg: load_config(cfg.to_str().unwrap()),
+        cfg_dir: cfg_dir.clone(),
+        cfg: load_config(cfg_path.to_str().unwrap()),
         hints: true,
-    };
 
+        todo_path,
+        suggested_project,
+    };
 
     loop {
         let show_help = app.cfg.get("show_hints").map(|v| v == "true").unwrap_or(true);
+
         terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Min(3),   // main area
-                    Constraint::Length(3)  // help bar
+                    Constraint::Min(3),
+                    Constraint::Length(3),
                 ])
                 .split(f.area());
+
+            let show_bottom = show_help
+                || matches!(app.mode, Mode::RemoveDialogue | Mode::SuggestProject);
+
             let main = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Percentage(50),
                     Constraint::Percentage(50),
                 ])
-                .split(if show_help || matches!(app.mode, Mode::RemoveDialogue) { chunks[0] } else { f.area() });
+                .split(if show_bottom { chunks[0] } else { f.area() });
 
             let todo_view_height = main[1].height.saturating_sub(2) as usize;
             app.todo_view_height = todo_view_height;
@@ -127,13 +198,12 @@ fn main() -> Result<(), io::Error> {
 
             let help_text = match app.mode {
                 Mode::RemoveDialogue => "y: confirm delete | n: cancel",
-                _ if show_help => normal_mode_text,
+                _ if show_help && app.mode != Mode::SuggestProject => normal_mode_text,
                 Mode::InputTodo => "typing todo... enter: save | esc: cancel",
                 Mode::EditNotes => "editing notes... enter: save | esc: cancel",
                 _ => "",
             };
 
-            // left (notes or editor)
             let left_text = match app.mode {
                 Mode::EditNotes | Mode::InputTodo => &app.input,
                 _ => app
@@ -162,17 +232,24 @@ fn main() -> Result<(), io::Error> {
                     }),
             );
 
-
-            let help = Paragraph::new(help_text).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(if !matches!(app.mode, Mode::RemoveDialogue) {"help"} else {"dialogue"})
-            );
-
+            let help = if matches!(app.mode, Mode::SuggestProject) {
+                let msg = format!(
+                    "Create project '{}'? y: yes | n: no (using global)",
+                    app.suggested_project.as_ref().map(|(n, _)| n.as_str()).unwrap_or("")
+                );
+                Paragraph::new(msg).block(
+                    Block::default().borders(Borders::ALL).title("dialogue")
+                )
+            } else {
+                Paragraph::new(help_text).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(if !matches!(app.mode, Mode::RemoveDialogue) {"help"} else {"dialogue"})
+                )
+            };
 
             f.render_widget(left, main[0]);
 
-            // right (tod0 list)
             let visible_todos = app
                 .todos
                 .iter()
@@ -207,13 +284,37 @@ fn main() -> Result<(), io::Error> {
 
             f.render_widget(list, main[1]);
 
-            if show_help || matches!(app.mode, Mode::RemoveDialogue) {
+            if show_bottom {
                 f.render_widget(help, chunks[1]);
             }
         })?;
 
-        if event::poll(std::time::Duration::from_millis(16))? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(std::time::Duration::from_millis(16))?
+            && let Event::Key(key) = event::read()? {
+
+                // SuggestProject mode — handled before everything else
+                if app.mode == Mode::SuggestProject {
+                    match key.code {
+                        KeyCode::Char('y') => {
+                            if let Some((name, root)) = app.suggested_project.take() {
+                                let tolight_dir = root.join(".tolight");
+                                fs::create_dir_all(&tolight_dir)?;
+                                let path = tolight_dir.join("todos.json");
+                                project::register_project(&name, &root);
+                                app.todo_path = path;
+                                app.todos.clear();
+                            }
+                            app.mode = Mode::Normal;
+                        }
+                        KeyCode::Char('n') => {
+                            app.suggested_project = None;
+                            app.mode = Mode::Normal;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match key.code {
                     // exit mode
                     KeyCode::Esc => {
@@ -222,13 +323,11 @@ fn main() -> Result<(), io::Error> {
                     }
 
                     // switch focus
-                    KeyCode::Tab => {
-                        if app.mode == Mode::Normal {
-                            app.focus = match app.focus {
-                                Focus::Left => Focus::Right,
-                                Focus::Right => Focus::Left,
-                            };
-                        }
+                    KeyCode::Tab if app.mode == Mode::Normal => {
+                        app.focus = match app.focus {
+                            Focus::Left => Focus::Right,
+                            Focus::Right => Focus::Left,
+                        };
                     }
 
                     KeyCode::Down => {
@@ -283,7 +382,7 @@ fn main() -> Result<(), io::Error> {
                             if let Some(t) = app.todos.get_mut(app.selected) {
                                 t.done = !t.done;
                             }
-save_to_file(&app.todos)?;
+                            save_to_file(&app.todos, &app.todo_path)?;
                         }
                     }
 
@@ -305,10 +404,10 @@ save_to_file(&app.todos)?;
                             app.hints = !app.hints;
                             match app.hints {
                                 true => {
-                                    app.cfg = parse_config(&*update_config_line(app.cfg_dir.join("config.cfg").to_str().unwrap(), "show_hints", "true"));
+                                    app.cfg = parse_config(&update_config_line(app.cfg_dir.join("config.cfg").to_str().unwrap(), "show_hints", "true"));
                                 }
                                 false => {
-                                    app.cfg = parse_config(&*update_config_line(app.cfg_dir.join("config.cfg").to_str().unwrap(), "show_hints", "false"));
+                                    app.cfg = parse_config(&update_config_line(app.cfg_dir.join("config.cfg").to_str().unwrap(), "show_hints", "false"));
                                 }
                             }
                         }
@@ -330,7 +429,7 @@ save_to_file(&app.todos)?;
                                             done: false,
                                             notes: String::new(),
                                         });
-                                        save_to_file(&app.todos)?;
+                                        save_to_file(&app.todos, &app.todo_path)?;
                                     }
                                     app.mode = Mode::Normal;
                             }
@@ -338,7 +437,7 @@ save_to_file(&app.todos)?;
                                     if let Some(t) = app.todos.get_mut(app.selected) {
                                         t.notes = app.input.drain(..).collect();
                                     }
-                                    save_to_file(&app.todos)?;
+                                    save_to_file(&app.todos, &app.todo_path)?;
                                 app.mode = Mode::Normal;
                             }
                             _ => {}
@@ -373,7 +472,7 @@ save_to_file(&app.todos)?;
                         if app.mode == Mode::RemoveDialogue {
                             let id = app.todos[app.selected].id;
                             app.todos.retain(|t| t.id != id);
-                            save_to_file(&app.todos)?;
+                            save_to_file(&app.todos, &app.todo_path)?;
                             app.mode = Mode::Normal;
                         }
                     }
@@ -391,16 +490,15 @@ save_to_file(&app.todos)?;
                         if matches!(app.mode, Mode::InputTodo | Mode::EditNotes) {
                             app.input.push('e');
                         }
-                        if app.mode == Mode::Normal && app.focus == Focus::Left {
-                            if let Some(t) = app.todos.get(app.selected) {
+                        if app.mode == Mode::Normal && app.focus == Focus::Left
+                            && let Some(t) = app.todos.get(app.selected) {
                                 app.input = t.notes.clone();
                                 app.mode = Mode::EditNotes;
-                            }
                         }
                     }
 
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        save_to_file(&app.todos)?;
+                        save_to_file(&app.todos, &app.todo_path)?;
                         break;
                     }
 
@@ -422,7 +520,7 @@ save_to_file(&app.todos)?;
 
                     _ => {}
                 }
-            }
+
         }
     }
 

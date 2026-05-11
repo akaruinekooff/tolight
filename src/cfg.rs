@@ -1,17 +1,24 @@
 use std::collections::HashMap;
 use std::{env, fs};
-use std::path::Path;
-use serde_json;
-use crate::{Todo};
+use std::path::{Path, PathBuf};
+use crate::Todo;
 
-pub fn save_to_file(todos: &[Todo]) -> std::io::Result<()> {
+pub fn global_todo_path() -> PathBuf {
+    let home = env::var("HOME").expect("HOME not set");
+    Path::new(&home).join(".tolight").join("todos.json")
+}
+
+pub fn save_to_file(todos: &[Todo], path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let json = serde_json::to_string_pretty(todos)?;
-    fs::write(env::current_dir().expect("check perms in current dir").join(".tolight").join("todos.json"), json)?;
+    fs::write(path, json)?;
     Ok(())
 }
 
-pub fn load_todos() -> Vec<Todo> {
-    let data = fs::read_to_string(env::current_dir().expect("check perms in current dir").join(".tolight").join("todos.json")).unwrap_or("[]".to_string());
+pub fn load_todos(path: &Path) -> Vec<Todo> {
+    let data = fs::read_to_string(path).unwrap_or_else(|_| "[]".to_string());
     serde_json::from_str(&data).unwrap()
 }
 
@@ -28,12 +35,11 @@ pub fn update_config_line(path: &str, key: &str, new_value: &str) -> String {
             continue;
         }
 
-        if let Some((k, _)) = trimmed.split_once('=') {
-            if k.trim() == key {
+        if let Some((k, _)) = trimmed.split_once('=')
+            && k.trim() == key {
                 *line = format!("{}={}", key, new_value);
                 found = true;
                 break;
-            }
         }
     }
 
@@ -51,10 +57,9 @@ pub fn load_config(path: &str) -> HashMap<String, String> {
     let path_obj = Path::new(path);
 
     if !path_obj.exists() {
-        if let Some(parent) = path_obj.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
+        if let Some(parent) = path_obj.parent()
+            && let Err(e) = fs::create_dir_all(parent) {
                 eprintln!("failed to create dirs: {}", e);
-            }
         }
 
         let default = "\
