@@ -5,7 +5,7 @@ edition = "2024"
 description = "A terminal-based (TUI) todo list manager for developers with per-project todo files"
 authors = ["George Kulikov"]
 license = "MIT"
-repository = "https://github.com/akaruineko/tolight"
+repository = "https://github.com/akaruinekooff/tolight"
 keywords = ["todo", "tui", "terminal", "project-management", "ratatui"]
 categories = ["command-line-utilities", "development-tools"]
 
